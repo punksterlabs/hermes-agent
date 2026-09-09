@@ -3881,6 +3881,12 @@ def _try_payment_fallback(
             continue
         client, model = try_fn()
         if client is not None:
+            if task == "vision" and _candidate_text_only_for_vision(label, model):
+                logger.info(
+                    "Auxiliary vision: skipping %s (%s is text-only; image content would be rejected), continuing chain",
+                    label, model)
+                tried.append(f"{label} (text-only, skipped for vision)")
+                continue
             logger.info("Auxiliary %s: %s on %s — falling back to %s (%s)",
                         task or "call", reason, failed_provider, label, model or "default")
             return client, model, label
@@ -3941,6 +3947,11 @@ def _try_main_agent_model_fallback(
         client, resolved_model = None, None
     if client is None:
         return None, None, ""
+    if task == "vision" and _candidate_text_only_for_vision(main_provider, resolved_model or main_model):
+        logger.info(
+            "Auxiliary vision: main-agent rung skipped (%s/%s is text-only; image content would be rejected)",
+            main_provider, resolved_model or main_model)
+        return None, None, ""
     label = f"main-agent({main_provider})"
     logger.info("Auxiliary %s: %s on %s — falling back to main agent model %s (%s)",
                 task or "call", reason, failed_provider, label, resolved_model or main_model)
@@ -3962,6 +3973,23 @@ def _try_main_agent_model_fallback(
 # ``get_model_context_length`` are passed through (we cannot prove a model is too small, so we do not block
 # it). This preserves the existing fallback surface for unrecognised/custom models while closing the gap on
 # the well-known ones.
+# ── Modality screening for runtime fallback chains (vision) ── A ``task="vision"`` call carries
+# image content that text-only models reject (e.g. DeepSeek error 1210: content.type invalid). The
+# primary vision auto-detect skips non-vision backends, but the runtime fallback chains selected
+# candidates on reachability/context alone, so a provider blip routed the image to a text-only model
+# and the whole vision call failed. Screen candidates the same way: skip only models *known* to be
+# text-only (``_lookup_supports_vision`` → False); ``None`` (unknown/custom) passes through.
+def _candidate_text_only_for_vision(provider: str, model: Optional[str]) -> bool:
+    """True when the candidate is known text-only; unknown capability never blocks."""
+    if not model:
+        return False
+    try:
+        from agent.image_routing import _lookup_supports_vision
+        return _lookup_supports_vision(provider, model) is False
+    except Exception:
+        return False
+
+
 def _task_minimum_context_length(task: Optional[str]) -> Optional[int]:
     """Minimum context length for an auxiliary task; None = no floor (only ``compression`` has one)."""
     return MINIMUM_CONTEXT_LENGTH if task == "compression" else None
@@ -4041,6 +4069,12 @@ def _try_configured_fallback_chain(
             ) if resolved_model else None
             if too_small:
                 tried.append(too_small)
+                continue
+            if task == "vision" and _candidate_text_only_for_vision(fb_provider, resolved_model or fb_model):
+                logger.info(
+                    "Auxiliary vision: skipping %s (%s is text-only; image content would be rejected), continuing chain",
+                    label, resolved_model or fb_model)
+                tried.append(f"{label} (text-only, skipped for vision)")
                 continue
             logger.info("Auxiliary %s: %s on %s — configured fallback to %s (%s)",
                         task, reason, failed_provider, label, resolved_model or fb_model or "default")
@@ -4133,6 +4167,12 @@ def _try_main_fallback_chain(
             )
             if too_small:
                 tried.append(too_small)
+                continue
+            if task == "vision" and _candidate_text_only_for_vision(fb_provider, resolved_model or fb_model):
+                logger.info(
+                    "Auxiliary vision: skipping %s (%s is text-only; image content would be rejected), continuing chain",
+                    label, resolved_model or fb_model)
+                tried.append(f"{label} (text-only, skipped for vision)")
                 continue
             logger.info("Auxiliary %s: %s on %s — main fallback chain to %s (%s)",
                         task or "call", reason, failed_provider or "auto", label, resolved_model or fb_model)
