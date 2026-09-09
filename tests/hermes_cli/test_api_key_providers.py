@@ -22,6 +22,102 @@ from hermes_cli.copilot_auth import _try_gh_cli_token
 # Provider Registry tests
 # =============================================================================
 
+class TestProviderRegistry:
+    """Test that new providers are correctly registered."""
+
+    @pytest.mark.parametrize("provider_id,name,auth_type", [
+        ("copilot-acp", "GitHub Copilot ACP", "external_process"),
+        ("copilot", "GitHub Copilot", "api_key"),
+        ("huggingface", "Hugging Face", "api_key"),
+        ("zai", "Z.AI / GLM", "api_key"),
+        ("xai", "xAI", "api_key"),
+        ("nvidia", "NVIDIA NIM", "api_key"),
+        ("kimi-coding", "Kimi / Moonshot", "api_key"),
+        ("stepfun", "StepFun Step Plan", "api_key"),
+        ("minimax", "MiniMax", "api_key"),
+        ("minimax-cn", "MiniMax (China)", "api_key"),
+        ("ai-gateway", "Vercel AI Gateway", "api_key"),
+        ("kilocode", "Kilo Code", "api_key"),
+        ("gmi", "GMI Cloud", "api_key"),
+    ])
+    def test_provider_registered(self, provider_id, name, auth_type):
+        assert provider_id in PROVIDER_REGISTRY
+        pconfig = PROVIDER_REGISTRY[provider_id]
+        assert pconfig.name == name
+        assert pconfig.auth_type == auth_type
+        assert pconfig.inference_base_url  # must have a default base URL
+
+
+
+
+    def test_copilot_env_vars(self):
+        pconfig = PROVIDER_REGISTRY["copilot"]
+        assert pconfig.api_key_env_vars == ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
+        assert pconfig.base_url_env_var == "COPILOT_API_BASE_URL"
+
+    def test_kimi_env_vars(self):
+        pconfig = PROVIDER_REGISTRY["kimi-coding"]
+        # KIMI_API_KEY is the primary env var; KIMI_CODING_API_KEY is a
+        # secondary fallback for Kimi Code sk-kimi- keys so users don't
+        # have to overload the same variable.
+        assert "KIMI_API_KEY" in pconfig.api_key_env_vars
+        assert "KIMI_CODING_API_KEY" in pconfig.api_key_env_vars
+        assert pconfig.base_url_env_var == "KIMI_BASE_URL"
+
+    def test_minimax_env_vars(self):
+        pconfig = PROVIDER_REGISTRY["minimax"]
+        assert pconfig.api_key_env_vars == ("MINIMAX_API_KEY",)
+        assert pconfig.base_url_env_var == "MINIMAX_BASE_URL"
+
+    def test_stepfun_env_vars(self):
+        pconfig = PROVIDER_REGISTRY["stepfun"]
+        assert pconfig.api_key_env_vars == ("STEPFUN_API_KEY",)
+        assert pconfig.base_url_env_var == "STEPFUN_BASE_URL"
+
+    def test_minimax_cn_env_vars(self):
+        pconfig = PROVIDER_REGISTRY["minimax-cn"]
+        assert pconfig.api_key_env_vars == ("MINIMAX_CN_API_KEY",)
+        assert pconfig.base_url_env_var == "MINIMAX_CN_BASE_URL"
+
+    def test_ai_gateway_env_vars(self):
+        pconfig = PROVIDER_REGISTRY["ai-gateway"]
+        assert pconfig.api_key_env_vars == ("AI_GATEWAY_API_KEY",)
+        assert pconfig.base_url_env_var == "AI_GATEWAY_BASE_URL"
+
+    def test_kilocode_env_vars(self):
+        pconfig = PROVIDER_REGISTRY["kilocode"]
+        assert pconfig.api_key_env_vars == ("KILOCODE_API_KEY",)
+        assert pconfig.base_url_env_var == "KILOCODE_BASE_URL"
+
+    def test_gmi_env_vars(self):
+        pconfig = PROVIDER_REGISTRY["gmi"]
+        assert pconfig.api_key_env_vars == ("GMI_API_KEY",)
+        assert pconfig.base_url_env_var == "GMI_BASE_URL"
+
+    def test_huggingface_env_vars(self):
+        pconfig = PROVIDER_REGISTRY["huggingface"]
+        assert pconfig.api_key_env_vars == ("HF_TOKEN",)
+        assert pconfig.base_url_env_var == "HF_BASE_URL"
+
+    def test_base_urls(self):
+        assert PROVIDER_REGISTRY["copilot"].inference_base_url == "https://api.githubcopilot.com"
+        assert PROVIDER_REGISTRY["copilot-acp"].inference_base_url == "acp://copilot"
+        assert PROVIDER_REGISTRY["zai"].inference_base_url == "https://api.z.ai/api/coding/paas/v4"
+        assert PROVIDER_REGISTRY["kimi-coding"].inference_base_url == "https://api.moonshot.ai/v1"
+        assert PROVIDER_REGISTRY["stepfun"].inference_base_url == STEPFUN_STEP_PLAN_INTL_BASE_URL
+        assert PROVIDER_REGISTRY["minimax"].inference_base_url == "https://api.minimax.io/anthropic"
+        assert PROVIDER_REGISTRY["minimax-cn"].inference_base_url == "https://api.minimaxi.com/anthropic"
+        assert PROVIDER_REGISTRY["ai-gateway"].inference_base_url == "https://ai-gateway.vercel.sh/v1"
+        assert PROVIDER_REGISTRY["kilocode"].inference_base_url == "https://api.kilo.ai/api/gateway"
+        assert PROVIDER_REGISTRY["gmi"].inference_base_url == "https://api.gmi-serving.com/v1"
+        assert PROVIDER_REGISTRY["huggingface"].inference_base_url == "https://router.huggingface.co/v1"
+
+    def test_oauth_providers_unchanged(self):
+        """Ensure we didn't break the existing OAuth providers."""
+        assert "nous" in PROVIDER_REGISTRY
+        assert PROVIDER_REGISTRY["nous"].auth_type == "oauth_device_code"
+        assert "openai-codex" in PROVIDER_REGISTRY
+        assert PROVIDER_REGISTRY["openai-codex"].auth_type == "oauth_external"
 
 # =============================================================================
 # Provider Resolution tests
@@ -513,7 +609,7 @@ class TestKimiCodeCredentialAutoDetect:
         monkeypatch.setenv("GLM_API_KEY", "sk-kim...isnt")
         monkeypatch.setattr("hermes_cli.auth.detect_zai_endpoint", lambda *a, **kw: None)
         creds = resolve_api_key_provider_credentials("zai")
-        assert creds["base_url"] == "https://api.z.ai/api/paas/v4"
+        assert creds["base_url"] == "https://api.z.ai/api/coding/paas/v4"
 
 
 class TestZaiEndpointAutoDetect:
@@ -550,7 +646,7 @@ class TestZaiEndpointAutoDetect:
         calls = []
         monkeypatch.setattr("hermes_cli.auth.detect_zai_endpoint", lambda *a, **kw: calls.append(1))
         for _ in range(3):
-            assert resolve_api_key_provider_credentials("zai")["base_url"] == "https://api.z.ai/api/paas/v4"
+            assert resolve_api_key_provider_credentials("zai")["base_url"] == "https://api.z.ai/api/coding/paas/v4"
         assert len(calls) == 1
 
 
